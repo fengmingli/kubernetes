@@ -94,6 +94,7 @@ func (g *genericScheduler) snapshot() error {
 // Schedule tries to schedule the given pod to one of the nodes in the node list.
 // If it succeeds, it will return the name of the node.
 // If it fails, it will return a FitError error with reasons.
+//TODO 最最核心的调度逻辑
 func (g *genericScheduler) Schedule(ctx context.Context, fwk framework.Framework, state *framework.CycleState, pod *v1.Pod) (result ScheduleResult, err error) {
 	trace := utiltrace.New("Scheduling", utiltrace.Field{Key: "namespace", Value: pod.Namespace}, utiltrace.Field{Key: "name", Value: pod.Name})
 	defer trace.LogIfLong(100 * time.Millisecond)
@@ -107,6 +108,10 @@ func (g *genericScheduler) Schedule(ctx context.Context, fwk framework.Framework
 		return result, ErrNoNodesAvailable
 	}
 
+	//预选，找到一些符合基本条件的node
+	//1、运行所有的prefilter插件
+	//2、运行所有的filter插件
+	//3、如果存在extender，执行extender的filter方法
 	feasibleNodes, diagnosis, err := g.findNodesThatFitPod(ctx, fwk, state, pod)
 	if err != nil {
 		return result, err
@@ -122,6 +127,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, fwk framework.Framework
 	}
 
 	// When only one node after predicate, just use it.
+	//如果预选阶段只留下一个node，直接使用
 	if len(feasibleNodes) == 1 {
 		return ScheduleResult{
 			SuggestedHost:  feasibleNodes[0].Name,
@@ -130,6 +136,8 @@ func (g *genericScheduler) Schedule(ctx context.Context, fwk framework.Framework
 		}, nil
 	}
 
+	//如果不只一个node，那么进行优选
+	//优选阶段会给每个node打分
 	priorityList, err := g.prioritizeNodes(ctx, fwk, state, pod, feasibleNodes)
 	if err != nil {
 		return result, err
@@ -227,6 +235,7 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, fwk framewor
 	}
 
 	// Run "prefilter" plugins.
+	//1、运行prefilter插件
 	s := fwk.RunPreFilterPlugins(ctx, state, pod)
 	allNodes, err := g.nodeInfoSnapshot.NodeInfos().List()
 	if err != nil {
@@ -258,11 +267,12 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, fwk framewor
 			return feasibleNodes, diagnosis, nil
 		}
 	}
+	//2、运行所有的filter插件
 	feasibleNodes, err := g.findNodesThatPassFilters(ctx, fwk, state, pod, diagnosis, allNodes)
 	if err != nil {
 		return nil, diagnosis, err
 	}
-
+   //3、运行所有的extender插件
 	feasibleNodes, err = g.findNodesThatPassExtenders(pod, feasibleNodes, diagnosis.NodeToStatusMap)
 	if err != nil {
 		return nil, diagnosis, err
@@ -424,12 +434,14 @@ func (g *genericScheduler) prioritizeNodes(
 	}
 
 	// Run PreScore plugins.
+	//运行所有的preScore插件
 	preScoreStatus := fwk.RunPreScorePlugins(ctx, state, pod, nodes)
 	if !preScoreStatus.IsSuccess() {
 		return nil, preScoreStatus.AsError()
 	}
 
 	// Run the Score plugins.
+	//运行所有的Score插件
 	scoresMap, scoreStatus := fwk.RunScorePlugins(ctx, state, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return nil, scoreStatus.AsError()

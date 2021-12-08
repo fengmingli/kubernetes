@@ -59,6 +59,7 @@ const (
 
 // Scheduler watches for new unscheduled pods. It attempts to find
 // nodes that they fit on and writes bindings back to the api server.
+//TODO 源码阅读切入点
 type Scheduler struct {
 	// It is expected that changes made via SchedulerCache will be observed
 	// by NodeLister and Algorithm.
@@ -70,19 +71,23 @@ type Scheduler struct {
 	// is available. We don't use a channel for this, because scheduling
 	// a pod may take some amount of time and we don't want pods to get
 	// stale while they sit in a channel.
+	//获取下一个待调度的pod
 	NextPod func() *framework.QueuedPodInfo
 
 	// Error is called if there is an error. It is passed the pod in
 	// question, and the error
+	//调度失败的处理方法
 	Error func(*framework.QueuedPodInfo, error)
 
 	// Close this to shut down the scheduler.
 	StopEverything <-chan struct{}
 
 	// SchedulingQueue holds pods to be scheduled
+	//三级队列
 	SchedulingQueue internalqueue.SchedulingQueue
 
 	// Profiles are the scheduling profiles.
+	//调度配置、很重要，控制整个调度过程的核心
 	Profiles profile.Map
 
 	client clientset.Interface
@@ -197,14 +202,19 @@ func New(client clientset.Interface,
 	if stopEverything == nil {
 		stopEverything = wait.NeverStop
 	}
-
+	//获取默认的调度器选项
+	//1。里面会设置一些默认的组件参数
+	//2。里面会给定默认的AlgorithmSourceProvider，整个很关键。后续调度锁依赖这里提供的算法
 	options := defaultSchedulerOptions
 	for _, opt := range opts {
 		opt(&options)
 	}
 
+	//初始化调度缓存
 	schedulerCache := internalcache.New(30*time.Second, stopEverything)
 
+	//registry 是一个字典，里面存放了插件名与插件的工厂方法
+	//默认接近30个插件
 	registry := frameworkplugins.NewInTreeRegistry()
 	if err := registry.Merge(options.frameworkOutOfTreeRegistry); err != nil {
 		return nil, err
@@ -212,6 +222,7 @@ func New(client clientset.Interface,
 
 	snapshot := internalcache.NewEmptySnapshot()
 
+	//基于配置，创建configuration实例
 	configurator := &Configurator{
 		client:                   client,
 		recorderFactory:          recorderFactory,
@@ -234,8 +245,10 @@ func New(client clientset.Interface,
 	var sched *Scheduler
 	source := options.schedulerAlgorithmSource
 	switch {
+	//这里provider默认不为空，会走整个分支
 	case source.Provider != nil:
 		// Create the config from a named algorithm provider.
+		//从命名算法提供程序创建配置。
 		sc, err := configurator.createFromProvider(*source.Provider)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't create scheduler using provider %q: %v", *source.Provider, err)
@@ -270,6 +283,9 @@ func New(client clientset.Interface,
 	sched.StopEverything = stopEverything
 	sched.client = client
 
+	//添加回调，这一步启动所有的事件监听。
+	//把client-go的内容和调度队列的内容衔接起来，
+	//调度器通过这些给这些资源加回调方法更新本地状态同时更新调度队列里的：unscheduleableQ
 	addAllEventHandlers(sched, informerFactory)
 	return sched, nil
 }
@@ -311,6 +327,7 @@ func initPolicyFromConfigMap(client clientset.Interface, policyRef *schedulerapi
 }
 
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
+//TODO:入口scheduler的RUN方法
 func (sched *Scheduler) Run(ctx context.Context) {
 	sched.SchedulingQueue.Run()
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
@@ -445,6 +462,8 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 	pod := podInfo.Pod
+	//1、选择pod对应的丢都算法，pod配置会指定调度器的名字，默认是defaultscheduler
+	//如果指定的名字不存在，则会报错，停止调度
 	fwk, err := sched.frameworkForPod(pod)
 	if err != nil {
 		// This shouldn't happen, because we only accept for scheduling the pods
@@ -452,6 +471,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		klog.ErrorS(err, "Error occurred")
 		return
 	}
+	//2、检测是否需要跳过调度，这里会检测pod是否已经被调度或者被指定了Node
 	if sched.skipPodSchedule(fwk, pod) {
 		return
 	}
@@ -464,8 +484,10 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	state.SetRecordPluginMetrics(rand.Intn(100) < pluginMetricsSamplePercent)
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	//3、调用prof的算法进行调度，这里的prof其实就是第一步里，根据pod配置，获取到的调度配置
 	scheduleResult, err := sched.Algorithm.Schedule(schedulingCycleCtx, fwk, state, pod)
 	if err != nil {
+		//4、调度失败的逻辑，判断prof内，是否存在postfilter阶段的插件。如果存在则执行
 		// Schedule() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
@@ -503,6 +525,8 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInSeconds(start))
 	// Tell the cache to assume that a pod now is running on a given node, even though it hasn't been bound yet.
 	// This allows us to keep scheduling without waiting on binding to occur.
+	//5、调度成功到节点，现更改调度器本地缓存里的数据，然后另起一个协程执行pod与node的绑定操作
+	//立即开启下一个pod的调度
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
@@ -550,6 +574,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 
+	//绑定pod与node
 	// bind the pod to its host asynchronously (we can do this b/c of the assumption step above).
 	go func() {
 		bindingCycleCtx, cancel := context.WithCancel(ctx)

@@ -69,6 +69,7 @@ const (
 // SchedulingQueue is an interface for a queue to store pods waiting to be scheduled.
 // The interface follows a pattern similar to cache.FIFO and cache.Heap and
 // makes it easy to use those data structures as a SchedulingQueue.
+//SchedulingQueue 定义了一个队列接口，用于保存等待调度的pod信息
 type SchedulingQueue interface {
 	framework.PodNominator
 	Add(pod *v1.Pod) error
@@ -118,42 +119,58 @@ func NominatedNodeName(pod *v1.Pod) string {
 // pods that are already tried and are determined to be unschedulable. The latter
 // is called unschedulableQ. The third queue holds pods that are moved from
 // unschedulable queues and will be moved to active queue when backoff are completed.
+
+//PriorityQueue 优先队列
+//SchedulingQueue的具体实现：其核心数据结构主要包含三个队列： activeQ、podBackoffQ、unscheduleQ
+//队列的头是等待调度的pod里优先级最高级的
+//包括三个子队列
 type PriorityQueue struct {
 	// PodNominator abstracts the operations to maintain nominated Pods.
+	//存储、设置地道都的提名信息，其实就是调度的结果：pod和node的对应关系
 	framework.PodNominator
-
+	//外部控制队列的channel
 	stop  chan struct{}
 	clock util.Clock
 
 	// pod initial backoff duration.
+	//初始等待调度时间
 	podInitialBackoffDuration time.Duration
 	// pod maximum backoff duration.
+	//最大等待重新调度的时间
 	podMaxBackoffDuration time.Duration
 
 	lock sync.RWMutex
+	//并发场景下，控制pop的阻塞
 	cond sync.Cond
 
 	// activeQ is heap structure that scheduler actively looks at to find pods to
 	// schedule. Head of heap is the highest priority pod.
+	//阻塞队列
 	activeQ *heap.Heap
 	// podBackoffQ is a heap ordered by backoff expiry. Pods which have completed backoff
 	// are popped from this heap before the scheduler looks at activeQ
+	//backoff队列（优先队列），对于调度失败的pod会优先存储在backoff队列中，等待后续重试。
+	//延迟等待调度的时间
 	podBackoffQ *heap.Heap
 	// unschedulableQ holds pods that have been tried and determined unschedulable.
+	//不可调度队列
 	unschedulableQ *UnschedulablePodsMap
 	// schedulingCycle represents sequence number of scheduling cycle and is incremented
 	// when a pod is popped.
+	//一个计数器，每次pop一个pod，自增一次
 	schedulingCycle int64
 	// moveRequestCycle caches the sequence number of scheduling cycle when we
 	// received a move request. Unschedulable pods in and before this scheduling
 	// cycle will be put back to activeQueue if we were trying to schedule them
 	// when we received move request.
+	//移除请求周期
 	moveRequestCycle int64
 
 	clusterEventMap map[framework.ClusterEvent]sets.String
 
 	// closed indicates that the queue is closed.
 	// It is mainly used to let Pop() exit its control loop while waiting for an item.
+	//控制队列的开关
 	closed bool
 
 	nsLister listersv1.NamespaceLister
@@ -267,7 +284,9 @@ func NewPriorityQueue(
 
 // Run starts the goroutine to pump from podBackoffQ to activeQ
 func (p *PriorityQueue) Run() {
+	//每隔1秒，检测backoffQ里是否有pod可以被放进activeQ（阻塞队列）里
 	go wait.Until(p.flushBackoffQCompleted, 1.0*time.Second, p.stop)
+	//每隔30秒，检测unschedulepodQ（不可调用）里是有pod可以被进行activeQ（阻塞队列）里（默认条件是等待时间超过60秒）
 	go wait.Until(p.flushUnschedulableQLeftover, 30*time.Second, p.stop)
 }
 
@@ -506,8 +525,10 @@ func (p *PriorityQueue) Delete(pod *v1.Pod) error {
 
 // AssignedPodAdded is called when a bound pod is added. Creation of this pod
 // may make pending pods with matching affinity terms schedulable.
+//添加可分配的Pod
 func (p *PriorityQueue) AssignedPodAdded(pod *v1.Pod) {
 	p.lock.Lock()
+	//将 Pod 移动到 Active 或 Backoff 队列
 	p.movePodsToActiveOrBackoffQueue(p.getUnschedulablePodsWithMatchingAffinityTerm(pod), AssignedPodAdd)
 	p.lock.Unlock()
 }
@@ -680,6 +701,7 @@ func (p *PriorityQueue) getBackoffTime(podInfo *framework.QueuedPodInfo) time.Ti
 
 // calculateBackoffDuration is a helper function for calculating the backoffDuration
 // based on the number of attempts the pod has made.
+//计算backoff的时间
 func (p *PriorityQueue) calculateBackoffDuration(podInfo *framework.QueuedPodInfo) time.Duration {
 	duration := p.podInitialBackoffDuration
 	for i := 1; i < podInfo.Attempts; i++ {
@@ -699,6 +721,8 @@ func updatePod(oldPodInfo interface{}, newPod *v1.Pod) *framework.QueuedPodInfo 
 
 // UnschedulablePodsMap holds pods that cannot be scheduled. This data structure
 // is used to implement unschedulableQ.
+//存储暂时无法被调度的pod信息
+//例如：资源不足，无法被调度
 type UnschedulablePodsMap struct {
 	// podInfoMap is a map key by a pod's full-name and the value is a pointer to the QueuedPodInfo.
 	podInfoMap map[string]*framework.QueuedPodInfo

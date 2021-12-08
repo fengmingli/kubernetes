@@ -134,12 +134,24 @@ const (
 // predicateOrdering is the ordering of predicate execution.
 var predicateOrdering = []string{
 	CheckNodeUnschedulablePred,
-	GeneralPred, HostNamePred, PodFitsHostPortsPred,
-	MatchNodeSelectorPred, PodFitsResourcesPred, NoDiskConflictPred,
-	PodToleratesNodeTaintsPred, CheckNodeLabelPresencePred,
-	CheckServiceAffinityPred, MaxEBSVolumeCountPred, MaxGCEPDVolumeCountPred, MaxCSIVolumeCountPred,
-	MaxAzureDiskVolumeCountPred, MaxCinderVolumeCountPred, CheckVolumeBindingPred, NoVolumeZoneConflictPred,
-	EvenPodsSpreadPred, MatchInterPodAffinityPred,
+	GeneralPred,
+	HostNamePred,
+	PodFitsHostPortsPred,
+	MatchNodeSelectorPred,
+	PodFitsResourcesPred,
+	NoDiskConflictPred,
+	PodToleratesNodeTaintsPred,
+	CheckNodeLabelPresencePred,
+	CheckServiceAffinityPred,
+	MaxEBSVolumeCountPred,
+	MaxGCEPDVolumeCountPred,
+	MaxCSIVolumeCountPred,
+	MaxAzureDiskVolumeCountPred,
+	MaxCinderVolumeCountPred,
+	CheckVolumeBindingPred,
+	NoVolumeZoneConflictPred,
+	EvenPodsSpreadPred,
+	MatchInterPodAffinityPred,
 }
 
 // LegacyRegistry is used to store current state of registered predicates and priorities.

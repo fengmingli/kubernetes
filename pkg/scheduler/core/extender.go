@@ -39,16 +39,32 @@ const (
 )
 
 // HTTPExtender implements the Extender interface.
+//TODO 外部拓展程序
 type HTTPExtender struct {
+	// 调度扩展程序的URL，比如https://127.0.0.1:8080。
 	extenderURL      string
+	// xxxVerb是HTTPExtender.Xxx()接口的HTTP请求的URL，
+	//比如https://127.0.0.1:8080/'preemptVerb' 用于ProcessPreemption()接口。
 	preemptVerb      string
 	filterVerb       string
 	prioritizeVerb   string
 	bindVerb         string
+	// 调度扩展程序的权重，用来与ScorePlugin计算出最终的分数
 	weight           int64
 	client           *http.Client
+
+	// 调度扩展程序是否缓存了Node信息，如果调度扩展程序已经缓存了集群中所有节点的全部详细信息，那么只需要发送非常少量的Node信息即可，比如Node名字。
+	// 毕竟是HTTP调用，想法设法提升效率。但是为什么有podCacheCapable?这就要分析一下HTTPExtender发送的数据包括哪些了？
+	// 1. 待调度的Pod
+	// 2. Node(候选)
+	// 3. 候选Node上的候选Pod（仅抢占调度)
+	// 试想一下每次HTTP请求中Pod（包括候选Pod）可能不是不同的，而Node呢？有的请求可能会有不同，但于Filter请求因为需要的是Node全量，所以基本是相同。
+	// 会造成较大的无效数据传输，所以当调度扩展程序能够缓存Node信息时，客户端只需要传输很少的信息就可以了。
 	nodeCacheCapable bool
+	// 调度扩展程序管理的资源名称
 	managedResources sets.String
+
+	// 如果调度扩展程序不可用是否忽略
 	ignorable        bool
 }
 

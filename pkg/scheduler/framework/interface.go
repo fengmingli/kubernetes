@@ -609,6 +609,7 @@ type PostFilterResult struct {
 }
 
 // PodNominator abstracts operations to maintain nominated Pods.
+//Pod 提名信息的控制接口
 type PodNominator interface {
 	// AddNominatedPod adds the given pod to the nominated pod map or
 	// updates it if it already exists.

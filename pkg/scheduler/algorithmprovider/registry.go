@@ -68,6 +68,9 @@ func ListAlgorithmProviders() string {
 	return fmt.Sprintf("%s | %s", ClusterAutoscalerProvider, schedulerapi.SchedulerDefaultProviderName)
 }
 
+//默认的调度算法配置就是由该方法提供的
+//可以看到，各个阶段的名字以及对应的算法名
+//部分插件还设置了权重，以供计算后进一步的筛选使用
 func getDefaultConfig() *schedulerapi.Plugins {
 	plugins := &schedulerapi.Plugins{
 		QueueSort: schedulerapi.PluginSet{
